@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import network from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { Redis } from '@upstash/redis';
 import { getRandomWord } from './words.js';
 import { generateAIQuestion } from './aiService.js';
 
@@ -18,10 +19,52 @@ const io = new Server(httpServer, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  transports: ["websocket", "polling"]
 });
 
 const PORT = process.env.PORT || 3000;
+
+// Initialize Upstash Redis if credentials are provided in environment
+let redis = null;
+if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
+  console.log('📡 Upstash Redis room storage active!');
+}
+
+// In-memory fallback map for local development
+global.rooms = global.rooms || new Map();
+
+async function getRoom(roomId) {
+  if (!roomId) return null;
+  if (redis) {
+    try {
+      const data = await redis.get(`room:${roomId}`);
+      if (data) {
+        return typeof data === 'string' ? JSON.parse(data) : data;
+      }
+    } catch (err) {
+      console.error(`Redis get error for room ${roomId}:`, err);
+    }
+  }
+  return global.rooms.get(roomId) || null;
+}
+
+async function saveRoom(roomId, roomData) {
+  if (!roomId || !roomData) return;
+  global.rooms.set(roomId, roomData);
+  if (redis) {
+    try {
+      // Save to Upstash Redis with 24-hour expiration (86400 seconds)
+      await redis.set(`room:${roomId}`, JSON.stringify(roomData), { ex: 86400 });
+    } catch (err) {
+      console.error(`Redis save error for room ${roomId}:`, err);
+    }
+  }
+}
 
 // Find local IPv4 address for QR Code scan on mobile devices
 function getLocalIpAddress() {
@@ -37,10 +80,6 @@ function getLocalIpAddress() {
 }
 
 const SERVER_IP = getLocalIpAddress();
-
-// Store active game rooms
-// Key: roomId -> Room state object
-const rooms = new Map();
 
 // Helper to sanitize player object for public broadcast (never expose roles or internal scores during play)
 function sanitizeRoomForClient(room) {
@@ -65,20 +104,20 @@ function sanitizeRoomForClient(room) {
     answers: room.phase.includes('ANALYSIS') || room.phase.includes('VOTING') || room.phase === 'FINAL_REVEAL' || room.phase === 'GAME_COMPLETE'
       ? room.answers[room.currentRound] || {}
       : {},
-    // Final reveal payload (sent only in FINAL_REVEAL and GAME_COMPLETE)
     finalResult: room.finalResult || null
   };
 }
 
-// Master tick interval for all active room timers
-setInterval(() => {
-  for (const [roomId, room] of rooms.entries()) {
+// Master tick interval for active room timers
+setInterval(async () => {
+  for (const [roomId, room] of global.rooms.entries()) {
     if (room.timerActive && room.timer > 0) {
       room.timer -= 1;
       io.to(roomId).emit('timer_tick', { secondsRemaining: room.timer, phase: room.phase });
+      await saveRoom(roomId, room);
 
       if (room.timer === 0) {
-        handlePhaseTimeout(room);
+        await handlePhaseTimeout(room);
       }
     }
   }
@@ -87,55 +126,54 @@ setInterval(() => {
 async function advanceToNextPhase(room) {
   switch (room.phase) {
     case 'LOBBY':
-      // Start Game -> Role Assignment
       room.phase = 'ROLE_ASSIGNMENT';
       room.timer = 5;
       room.timerDuration = 5;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       sendPrivateRoles(room);
       break;
 
     case 'ROLE_ASSIGNMENT':
-      // Role Assignment -> Round 1 Question
       room.currentRound = 1;
       room.phase = 'ROUND_1_QUESTION';
       room.aiQuestion = await generateAIQuestion(room.secretWordItem, 1);
       room.timer = 15;
       room.timerDuration = 15;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_1_QUESTION':
-      // Question -> Round 1 Answer
       room.phase = 'ROUND_1_ANSWER';
       room.timer = 30;
       room.timerDuration = 30;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_1_ANSWER':
-      // Answer -> Round 1 Analysis
       room.phase = 'ROUND_1_ANALYSIS';
       room.timer = 30;
       room.timerDuration = 30;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_1_ANALYSIS':
-      // Analysis -> Round 1 Voting
       room.phase = 'ROUND_1_VOTING';
       room.timer = 15;
       room.timerDuration = 15;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_1_VOTING':
-      // End of Round 1 -> Calculate Round 1 backend scores silently -> Start Round 2 Question
       calculateRoundScores(room, 1);
       room.currentRound = 2;
       room.phase = 'ROUND_2_QUESTION';
@@ -143,43 +181,44 @@ async function advanceToNextPhase(room) {
       room.timer = 15;
       room.timerDuration = 15;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_2_QUESTION':
-      // Question -> Round 2 Answer
       room.phase = 'ROUND_2_ANSWER';
       room.timer = 30;
       room.timerDuration = 30;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_2_ANSWER':
-      // Answer -> Round 2 Analysis
       room.phase = 'ROUND_2_ANALYSIS';
       room.timer = 30;
       room.timerDuration = 30;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_2_ANALYSIS':
-      // Analysis -> Round 2 Voting
       room.phase = 'ROUND_2_VOTING';
       room.timer = 15;
       room.timerDuration = 15;
       room.timerActive = true;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
     case 'ROUND_2_VOTING':
-      // End of Round 2 -> Calculate Round 2 scores -> Final Reveal Calculation
       calculateRoundScores(room, 2);
       calculateFinalResults(room);
       room.phase = 'FINAL_REVEAL';
       room.timer = 0;
       room.timerActive = false;
+      await saveRoom(room.roomId, room);
       broadcastRoomUpdate(room);
       break;
 
@@ -188,8 +227,8 @@ async function advanceToNextPhase(room) {
   }
 }
 
-function handlePhaseTimeout(room) {
-  advanceToNextPhase(room);
+async function handlePhaseTimeout(room) {
+  await advanceToNextPhase(room);
 }
 
 function sendPrivateRoles(room) {
@@ -225,7 +264,6 @@ function calculateRoundScores(room, roundNum) {
   for (const [voterId, suspectId] of Object.entries(votesThisRound)) {
     const player = room.players.find(p => p.id === voterId);
     if (player && !imposterSet.has(voterId)) {
-      // Normal player correctly voted an imposter -> +20 points
       if (imposterSet.has(suspectId)) {
         player.scores[roundNum] = 20;
         player.correctVoteCount += 1;
@@ -244,7 +282,6 @@ function calculateFinalResults(room) {
     totalVotesReceived[player.id] = 0;
   }
 
-  // Aggregate votes from Round 1 and Round 2
   for (const r of [1, 2]) {
     const roundVotes = room.votes[r] || {};
     for (const suspectId of Object.values(roundVotes)) {
@@ -254,17 +291,14 @@ function calculateFinalResults(room) {
     }
   }
 
-  // Find max votes received by any player
   let maxVotes = 0;
   for (const count of Object.values(totalVotesReceived)) {
     if (count > maxVotes) maxVotes = count;
   }
 
-  // Check if any Imposter received the maximum votes
   const caughtImposters = room.imposterIds.filter(id => totalVotesReceived[id] === maxVotes && maxVotes > 0);
   const isImposterCaught = caughtImposters.length > 0;
 
-  // Calculate final total score for each non-imposter player
   for (const player of room.players) {
     player.totalScore = (player.scores[1] || 0) + (player.scores[2] || 0);
   }
@@ -278,17 +312,14 @@ function calculateFinalResults(room) {
   }));
 
   if (isImposterCaught) {
-    // Imposter caught! Highest scoring non-imposter wins
     const nonImposters = room.players.filter(p => !imposterSet.has(p.id));
     nonImposters.sort((a, b) => {
       if (b.totalScore !== a.totalScore) {
         return b.totalScore - a.totalScore;
       }
-      // Tie-breaker 1: Total correct votes
       if (b.correctVoteCount !== a.correctVoteCount) {
         return b.correctVoteCount - a.correctVoteCount;
       }
-      // Tie-breaker 2: Alphabetical fallback / join order
       return a.name.localeCompare(b.name);
     });
 
@@ -332,7 +363,7 @@ io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
   // 1. Host creates a new room
-  socket.on('create_room', ({ imposterCount = 1 }, callback) => {
+  socket.on('create_room', async ({ imposterCount = 1 }, callback) => {
     const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
     const room = {
       roomId,
@@ -354,7 +385,7 @@ io.on('connection', (socket) => {
       finalResult: null
     };
 
-    rooms.set(roomId, room);
+    await saveRoom(roomId, room);
     socket.join(roomId);
     console.log(`Room created: ${roomId} with host ${socket.id}`);
 
@@ -365,8 +396,8 @@ io.on('connection', (socket) => {
   });
 
   // 2. Host updates Imposter Count
-  socket.on('set_imposter_count', ({ roomId, imposterCount }, callback) => {
-    const room = rooms.get(roomId);
+  socket.on('set_imposter_count', async ({ roomId, imposterCount }, callback) => {
+    const room = await getRoom(roomId);
     if (!room || room.hostSocketId !== socket.id) return;
     if (room.phase !== 'LOBBY') return;
 
@@ -376,13 +407,14 @@ io.on('connection', (socket) => {
     }
 
     room.imposterCountSetting = imposterCount;
+    await saveRoom(roomId, room);
     broadcastRoomUpdate(room);
     if (typeof callback === 'function') callback({ success: true });
   });
 
   // 3. Player joins a room
-  socket.on('join_room', ({ roomId, name, avatar, playerId }, callback) => {
-    const room = rooms.get(roomId);
+  socket.on('join_room', async ({ roomId, name, avatar, playerId }, callback) => {
+    const room = await getRoom(roomId);
     if (!room) {
       if (typeof callback === 'function') callback({ success: false, error: 'Room not found. Please check room code.' });
       return;
@@ -398,7 +430,6 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Check if player name already taken
     const existingName = room.players.find(p => p.name.toLowerCase() === name.trim().toLowerCase());
     if (existingName) {
       if (typeof callback === 'function') callback({ success: false, error: 'Name already taken. Choose another name.' });
@@ -418,6 +449,7 @@ io.on('connection', (socket) => {
     };
 
     room.players.push(newPlayer);
+    await saveRoom(roomId, room);
     socket.join(roomId);
     console.log(`Player ${newPlayer.name} (${finalPlayerId}) joined room ${roomId}`);
 
@@ -428,8 +460,8 @@ io.on('connection', (socket) => {
   });
 
   // 4. Reconnect player
-  socket.on('reconnect_player', ({ roomId, playerId }, callback) => {
-    const room = rooms.get(roomId);
+  socket.on('reconnect_player', async ({ roomId, playerId }, callback) => {
+    const room = await getRoom(roomId);
     if (!room) {
       if (typeof callback === 'function') callback({ success: false, error: 'Room expired' });
       return;
@@ -439,10 +471,10 @@ io.on('connection', (socket) => {
     if (player) {
       player.socketId = socket.id;
       player.isConnected = true;
+      await saveRoom(roomId, room);
       socket.join(roomId);
       console.log(`Player ${player.name} reconnected to ${roomId}`);
 
-      // Send private role info if roles assigned
       if (room.phase !== 'LOBBY') {
         const isImposter = room.imposterIds.includes(player.id);
         const secret = room.secretWordItem;
@@ -470,8 +502,8 @@ io.on('connection', (socket) => {
   });
 
   // 5. Host Starts Game
-  socket.on('start_game', ({ roomId }, callback) => {
-    const room = rooms.get(roomId);
+  socket.on('start_game', async ({ roomId }, callback) => {
+    const room = await getRoom(roomId);
     if (!room || room.hostSocketId !== socket.id) return;
     if (room.phase !== 'LOBBY') return;
 
@@ -485,24 +517,23 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Assign secret word
     const wordItem = getRandomWord(room.usedWords);
     room.secretWordItem = wordItem;
     room.usedWords.push(wordItem.word);
 
-    // Pick Imposters randomly
     const shuffled = [...room.players].sort(() => 0.5 - Math.random());
     room.imposterIds = shuffled.slice(0, room.imposterCountSetting).map(p => p.id);
 
     console.log(`Starting game in room ${roomId}. Secret word: ${wordItem.word}. Imposters: ${room.imposterIds.join(', ')}`);
 
-    advanceToNextPhase(room);
+    await saveRoom(roomId, room);
+    await advanceToNextPhase(room);
     if (typeof callback === 'function') callback({ success: true });
   });
 
   // 6. Player Submits Short Answer
-  socket.on('submit_answer', ({ roomId, playerId, answer }, callback) => {
-    const room = rooms.get(roomId);
+  socket.on('submit_answer', async ({ roomId, playerId, answer }, callback) => {
+    const room = await getRoom(roomId);
     if (!room) return;
     const currentPhase = room.phase;
 
@@ -520,23 +551,23 @@ io.on('connection', (socket) => {
     }
 
     room.answers[roundNum][playerId] = sanitizedAnswer;
+    await saveRoom(roomId, room);
     broadcastRoomUpdate(room);
 
     if (typeof callback === 'function') callback({ success: true });
 
-    // Check if ALL active connected players have submitted answers
     const activePlayers = room.players.filter(p => p.isConnected);
     const submittedCount = Object.keys(room.answers[roundNum]).length;
 
     if (submittedCount >= activePlayers.length) {
       console.log(`All players submitted answers early in ${roomId}. Advancing phase...`);
-      advanceToNextPhase(room);
+      await advanceToNextPhase(room);
     }
   });
 
   // 7. Player Submits Private Vote
-  socket.on('submit_vote', ({ roomId, playerId, suspectId }, callback) => {
-    const room = rooms.get(roomId);
+  socket.on('submit_vote', async ({ roomId, playerId, suspectId }, callback) => {
+    const room = await getRoom(roomId);
     if (!room) return;
     const currentPhase = room.phase;
 
@@ -552,23 +583,23 @@ io.on('connection', (socket) => {
 
     const roundNum = room.currentRound;
     room.votes[roundNum][playerId] = suspectId;
+    await saveRoom(roomId, room);
     broadcastRoomUpdate(room);
 
     if (typeof callback === 'function') callback({ success: true });
 
-    // Check if ALL active connected players have voted
     const activePlayers = room.players.filter(p => p.isConnected);
     const votesCount = Object.keys(room.votes[roundNum]).length;
 
     if (votesCount >= activePlayers.length) {
       console.log(`All players voted early in ${roomId}. Advancing phase...`);
-      advanceToNextPhase(room);
+      await advanceToNextPhase(room);
     }
   });
 
   // 8. Host Play Again / Reset Game
-  socket.on('play_again', ({ roomId }) => {
-    const room = rooms.get(roomId);
+  socket.on('play_again', async ({ roomId }) => {
+    const room = await getRoom(roomId);
     if (!room || room.hostSocketId !== socket.id) return;
 
     room.phase = 'LOBBY';
@@ -588,16 +619,18 @@ io.on('connection', (socket) => {
       player.correctVoteCount = 0;
     }
 
+    await saveRoom(roomId, room);
     broadcastRoomUpdate(room);
   });
 
   // Handle Disconnect
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log(`Client disconnected: ${socket.id}`);
-    for (const room of rooms.values()) {
+    for (const room of global.rooms.values()) {
       const player = room.players.find(p => p.socketId === socket.id);
       if (player) {
         player.isConnected = false;
+        await saveRoom(room.roomId, room);
         broadcastRoomUpdate(room);
       }
     }
@@ -629,4 +662,10 @@ async function startServer() {
   });
 }
 
-startServer();
+// Export httpServer directly for Vercel Node/WebSocket architecture
+export default httpServer;
+
+// Start standalone server when executed directly (local development)
+if (!process.env.VERCEL) {
+  startServer();
+}

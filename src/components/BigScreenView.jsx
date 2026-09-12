@@ -22,8 +22,11 @@ export default function BigScreenView({ roomState }) {
     finalResult = null
   } = roomState || {};
 
-  // Build mobile join URL
-  const joinUrl = hostIp ? `http://${hostIp}:${port}/join?room=${roomId}` : `${window.location.origin}/join?room=${roomId}`;
+  // Build mobile join URL (uses local network IP for local Wi-Fi dev, or window.location.origin for live Vercel deployment)
+  const isLocalDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const joinUrl = (isLocalDev && hostIp)
+    ? `http://${hostIp}:${port}/join?room=${roomId}`
+    : `${typeof window !== 'undefined' ? window.location.origin : ''}/join?room=${roomId}`;
 
   // Generate QR Code on canvas
   useEffect(() => {

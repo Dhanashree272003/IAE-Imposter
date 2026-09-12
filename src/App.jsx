@@ -31,6 +31,7 @@ export default function App() {
   // Initialize Socket.IO connection
   useEffect(() => {
     const newSocket = io(window.location.origin, {
+      transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
