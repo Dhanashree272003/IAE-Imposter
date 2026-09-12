@@ -41,10 +41,11 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
     }
   }, [socket, hasJoined]);
 
-  // Read query param room code
+  // Read query param room code from URL
   const queryParams = new URLSearchParams(window.location.search);
-  const roomCodeFromUrl = queryParams.get('room') || roomId || '';
-  const [inputRoomId, setInputRoomId] = useState(roomCodeFromUrl);
+  const roomCodeFromUrl = (queryParams.get('room') || '').toUpperCase();
+  const isQrJoin = Boolean(roomCodeFromUrl);
+  const [inputRoomId, setInputRoomId] = useState(roomCodeFromUrl || roomId || '');
 
   const handleJoin = (e) => {
     e.preventDefault();
@@ -53,13 +54,15 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
       setErrorMsg('Please enter your display name.');
       return;
     }
-    if (!inputRoomId.trim()) {
+
+    const targetRoomId = (isQrJoin ? roomCodeFromUrl : inputRoomId).trim().toUpperCase();
+    if (!targetRoomId) {
       setErrorMsg('Please enter a valid room code.');
       return;
     }
 
     const existingId = localStorage.getItem('imposter_player_id');
-    onJoinRoom({ roomId: inputRoomId.trim().toUpperCase(), name: playerName.trim(), avatar: selectedAvatar, playerId: existingId }, (res) => {
+    onJoinRoom({ roomId: targetRoomId, name: playerName.trim(), avatar: selectedAvatar, playerId: existingId }, (res) => {
       if (res.success) {
         setHasJoined(true);
         setMyPlayerId(res.playerId);
@@ -137,16 +140,23 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
               </div>
             )}
 
-            <div>
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Room Code</label>
-              <input
-                type="text"
-                value={inputRoomId}
-                onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
-                placeholder="e.g. TECH7"
-                className="w-full bg-slate-900 border border-slate-700 focus:border-cyan-400 rounded-xl px-4 py-3 font-mono font-bold text-cyan-400 text-lg uppercase tracking-wider outline-none"
-              />
-            </div>
+            {isQrJoin ? (
+              <div className="p-3.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex justify-between items-center text-xs">
+                <span className="text-slate-400 font-mono uppercase font-bold tracking-wider">Joining Room</span>
+                <span className="font-mono font-black text-cyan-400 text-base tracking-widest">{roomCodeFromUrl}</span>
+              </div>
+            ) : (
+              <div>
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Room Code *</label>
+                <input
+                  type="text"
+                  value={inputRoomId}
+                  onChange={(e) => setInputRoomId(e.target.value.toUpperCase())}
+                  placeholder="e.g. TECH7"
+                  className="w-full bg-slate-900 border border-slate-700 focus:border-cyan-400 rounded-xl px-4 py-3 font-mono font-bold text-cyan-400 text-lg uppercase tracking-wider outline-none"
+                />
+              </div>
+            )}
 
             <div>
               <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Your Display Name</label>

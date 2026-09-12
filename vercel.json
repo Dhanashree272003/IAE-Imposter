@@ -3,19 +3,19 @@
   "rewrites": [
     {
       "source": "/api/health",
-      "destination": "/server.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/socket.io/(.*)",
-      "destination": "/server.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/api/(.*)",
-      "destination": "/server.js"
+      "destination": "/api/index.js"
     },
     {
       "source": "/((?!assets/|favicon.ico|.*\\.js|.*\\.css|.*\\.png|.*\\.jpg|.*\\.svg).*)",
-      "destination": "/server.js"
+      "destination": "/api/index.js"
     }
   ]
 }
