@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { playSound } from '../utils/sound';
-import { Users, Shield, Flame, Award, HelpCircle, CheckCircle2, Clock, Sparkles } from 'lucide-react';
+import { Users, Shield, Flame, Award, HelpCircle, CheckCircle2, Clock, Sparkles, AlertCircle } from 'lucide-react';
 
 export default function BigScreenView({ roomState }) {
   const qrCanvasRef = useRef(null);
@@ -22,14 +22,30 @@ export default function BigScreenView({ roomState }) {
     finalResult = null
   } = roomState || {};
 
-  // Build mobile join URL (uses local network IP for local Wi-Fi dev, or window.location.origin for live Vercel deployment)
-  const isLocalDev = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-  const joinUrl = (isLocalDev && hostIp)
-    ? `http://${hostIp}:${port}/join?room=${roomId}`
-    : `${typeof window !== 'undefined' ? window.location.origin : ''}/join?room=${roomId}`;
+  // Validate roomId to prevent generating broken/undefined QR codes
+  const validRoomId = (roomId && roomId !== 'undefined' && roomId !== 'null' && String(roomId).trim() !== '')
+    ? String(roomId).trim().toUpperCase()
+    : null;
 
-  // Generate QR Code on canvas
+  // Build mobile join URL:
+  // - On local network: use hostIp:port from server (phones can't resolve 'localhost')
+  // - On production: use window.location.origin (Vercel domain)
+  const isLocalDev = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+  const qrBase = (isLocalDev && hostIp && hostIp !== 'localhost' && port)
+    ? `http://${hostIp}:${port}`
+    : (typeof window !== 'undefined' ? window.location.origin : '');
+  const joinUrl = (validRoomId && qrBase)
+    ? `${qrBase}/join?room=${encodeURIComponent(validRoomId)}`
+    : '';
+
+  // Generate QR Code on canvas safely
   useEffect(() => {
+    if (!validRoomId) {
+      console.warn('[BigScreenView] Room ID unavailable, skipping QR code generation.');
+      return;
+    }
+
     if (qrCanvasRef.current && joinUrl) {
       QRCode.toCanvas(
         qrCanvasRef.current,
@@ -43,11 +59,11 @@ export default function BigScreenView({ roomState }) {
           },
         },
         (err) => {
-          if (err) console.error('QR code generation error:', err);
+          if (err) console.error('[BigScreenView] QR code generation error:', err);
         }
       );
     }
-  }, [joinUrl, phase]);
+  }, [joinUrl, validRoomId, phase]);
 
   // Audio timer ticks
   useEffect(() => {
@@ -129,7 +145,7 @@ export default function BigScreenView({ roomState }) {
         <div className="flex items-center gap-6">
           <div className="text-right">
             <span className="text-xs text-slate-400 uppercase font-mono tracking-wider">Room Code</span>
-            <div className="text-3xl font-black font-mono text-cyan-400 tracking-widest">{roomId}</div>
+            <div className="text-3xl font-black font-mono text-cyan-400 tracking-widest">{validRoomId || '---'}</div>
           </div>
           <div className="h-10 w-px bg-slate-800"></div>
           <div className="text-right">
@@ -151,15 +167,29 @@ export default function BigScreenView({ roomState }) {
               <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 font-semibold text-xs mb-4 uppercase tracking-wider">
                 <Sparkles className="w-4 h-4" /> Scan Phone QR Code
               </span>
-              <div className="p-4 bg-[#0b1329] rounded-2xl border border-cyan-500/30 shadow-inner mb-4">
-                <canvas ref={qrCanvasRef} className="rounded-xl"></canvas>
-              </div>
-              <p className="text-sm font-mono text-slate-300 break-all bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-800">
-                {joinUrl}
-              </p>
-              <p className="text-xs text-slate-400 mt-2 font-medium">
-                Connect your mobile to the same Wi-Fi & scan to join
-              </p>
+
+              {validRoomId ? (
+                <>
+                  <div className="p-4 bg-[#0b1329] rounded-2xl border border-cyan-500/30 shadow-inner mb-4">
+                    <canvas ref={qrCanvasRef} className="rounded-xl"></canvas>
+                  </div>
+                  <p className="text-sm font-mono text-slate-300 break-all bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-800">
+                    {joinUrl}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-2 font-medium">
+                    Scan with your phone camera to join Room <span className="font-mono font-bold text-cyan-400">{validRoomId}</span>
+                  </p>
+                </>
+              ) : (
+                <div className="p-6 bg-slate-900/90 rounded-2xl border border-rose-500/30 text-center my-4 space-y-3 w-full">
+                  <div className="text-rose-400 font-bold text-base flex items-center justify-center gap-2">
+                    <AlertCircle className="w-5 h-5 flex-shrink-0" /> Room ID Unavailable
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Please create a game room in the Host Control Panel to generate a valid join QR code.
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* JOINED PLAYERS LIST */}

@@ -43,7 +43,11 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
 
   // Read query param room code from URL
   const queryParams = new URLSearchParams(window.location.search);
-  const roomCodeFromUrl = (queryParams.get('room') || '').toUpperCase();
+  const rawRoomParam = (queryParams.get('room') || '').trim();
+  const roomCodeFromUrl = (rawRoomParam && rawRoomParam.toLowerCase() !== 'undefined' && rawRoomParam.toLowerCase() !== 'null')
+    ? rawRoomParam.toUpperCase()
+    : '';
+
   const isQrJoin = Boolean(roomCodeFromUrl);
   const [inputRoomId, setInputRoomId] = useState(roomCodeFromUrl || roomId || '');
 
@@ -56,13 +60,14 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
     }
 
     const targetRoomId = (isQrJoin ? roomCodeFromUrl : inputRoomId).trim().toUpperCase();
-    if (!targetRoomId) {
+    if (!targetRoomId || targetRoomId === 'UNDEFINED' || targetRoomId === 'NULL') {
       setErrorMsg('Please enter a valid room code.');
       return;
     }
 
+    const avatarToSend = selectedAvatar || '🤖';
     const existingId = localStorage.getItem('imposter_player_id');
-    onJoinRoom({ roomId: targetRoomId, name: playerName.trim(), avatar: selectedAvatar, playerId: existingId }, (res) => {
+    onJoinRoom({ roomId: targetRoomId, name: playerName.trim(), avatar: avatarToSend, playerId: existingId }, (res) => {
       if (res.success) {
         setHasJoined(true);
         setMyPlayerId(res.playerId);
@@ -115,7 +120,7 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
         </div>
         {hasJoined && (
           <div className="flex items-center gap-3">
-            <span className="text-xl">{myPlayer?.avatar || selectedAvatar}</span>
+            <span className="text-xl">{myPlayer?.avatar || selectedAvatar || '🤖'}</span>
             <span className="font-bold text-sm text-slate-200">{myPlayer?.name || playerName}</span>
           </div>
         )}
@@ -130,7 +135,7 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
               <h2 className="text-2xl font-black tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400">
                 JOIN AI IMPOSTER
               </h2>
-              <p className="text-xs text-slate-400">Enter your display name and choose an avatar</p>
+              <p className="text-xs text-slate-400">Enter your display name to join the game</p>
             </div>
 
             {errorMsg && (
@@ -159,7 +164,7 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
             )}
 
             <div>
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Your Display Name</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Your Display Name *</label>
               <input
                 type="text"
                 maxLength={20}
@@ -171,7 +176,7 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
             </div>
 
             <div>
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">Select Avatar</label>
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-2">Avatar (Optional)</label>
               <div className="grid grid-cols-5 gap-2">
                 {AVATAR_OPTIONS.map((av) => (
                   <button
@@ -181,7 +186,7 @@ export default function PlayerView({ socket, roomState, privateRole, onJoinRoom,
                     className={`text-2xl p-2 rounded-xl border transition-all ${
                       selectedAvatar === av
                         ? 'bg-cyan-500/20 border-cyan-400 scale-110 shadow-lg shadow-cyan-500/20'
-                        : 'bg-slate-900 border-slate-800 opacity-70'
+                        : 'bg-slate-900 border-slate-800 opacity-70 hover:opacity-100'
                     }`}
                   >
                     {av}

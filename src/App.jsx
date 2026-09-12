@@ -16,6 +16,7 @@ export default function App() {
     const path = window.location.pathname.toLowerCase();
     const searchParams = new URLSearchParams(window.location.search);
     const viewParam = searchParams.get('view') || searchParams.get('mode');
+    const roomParam = searchParams.get('room');
 
     if (path.includes('/display') || viewParam === 'display') {
       setViewMode('display');
@@ -25,6 +26,10 @@ export default function App() {
       setViewMode('player');
     } else {
       setViewMode('landing');
+    }
+
+    if (roomParam && roomParam.toLowerCase() !== 'undefined' && roomParam.toLowerCase() !== 'null') {
+      setRoomState((prev) => ({ ...prev, roomId: roomParam.trim().toUpperCase() }));
     }
   }, []);
 
@@ -39,6 +44,25 @@ export default function App() {
 
     newSocket.on('connect', () => {
       console.log('Socket.IO Connected to server');
+      const searchParams = new URLSearchParams(window.location.search);
+      const roomParam = searchParams.get('room');
+      const path = window.location.pathname.toLowerCase();
+      const isDisplayMode = path.includes('/display');
+
+      if (roomParam && roomParam.toLowerCase() !== 'undefined' && roomParam.toLowerCase() !== 'null') {
+        const cleanRoomId = roomParam.trim().toUpperCase();
+        if (isDisplayMode) {
+          // Display screen: subscribe as a read-only observer (not a player)
+          newSocket.emit('subscribe_display', { roomId: cleanRoomId }, (res) => {
+            if (res && !res.success) {
+              console.warn('[Display] subscribe_display failed:', res.error);
+            }
+          });
+        } else {
+          // Player reconnect flow
+          newSocket.emit('reconnect_player', { roomId: cleanRoomId, playerId: 'display_view' });
+        }
+      }
     });
 
     newSocket.on('room_state', (state) => {
@@ -163,8 +187,9 @@ export default function App() {
           {/* Big Screen Exhibition Card */}
           <button
             onClick={() => {
-              window.history.pushState({}, '', '/display');
-              setViewMode('display');
+              // Display mode without a room — direct user to Host Control Panel first
+              window.history.pushState({}, '', '/host');
+              setViewMode('host');
             }}
             className="p-6 rounded-2xl glass-panel-glow text-left flex flex-col justify-between hover:scale-105 transition-all group"
           >
@@ -172,11 +197,11 @@ export default function App() {
               <Monitor className="w-10 h-10 text-cyan-400 mb-4 group-hover:scale-110 transition-transform" />
               <h3 className="text-xl font-bold text-slate-100 mb-2">Exhibition Display</h3>
               <p className="text-xs text-slate-400 leading-relaxed">
-                Designed for large TVs and exhibition projectors. Displays QR code, round timers, and dramatic final reveal.
+                Designed for large TVs and exhibition projectors. Create a room in Host Controls, then click "Open Display View" to launch.
               </p>
             </div>
             <div className="mt-6 font-bold text-xs text-cyan-400 flex items-center gap-1">
-              OPEN DISPLAY MODE →
+              OPEN HOST CONTROLS →
             </div>
           </button>
 

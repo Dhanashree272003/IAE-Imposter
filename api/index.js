@@ -471,7 +471,7 @@ io.on('connection', (socket) => {
     const newPlayer = {
       id: finalPlayerId,
       name: name.trim(),
-      avatar: avatar || '👤',
+      avatar: (avatar && String(avatar).trim()) ? String(avatar).trim() : '🤖',
       socketId: socket.id,
       isConnected: true,
       scores: { 1: 0, 2: 0 },
@@ -530,6 +530,30 @@ io.on('connection', (socket) => {
     } else {
       if (typeof callback === 'function') callback({ success: false, error: 'Player session not found' });
     }
+  });
+
+  // 4b. Display screen subscribes to a room (read-only observer — not a player)
+  socket.on('subscribe_display', async ({ roomId }, callback) => {
+    if (!roomId || roomId === 'undefined' || roomId === 'null') {
+      if (typeof callback === 'function') callback({ success: false, error: 'Invalid room ID' });
+      return;
+    }
+    const upperRoomId = String(roomId).trim().toUpperCase();
+    const room = await getRoom(upperRoomId);
+    if (!room) {
+      if (typeof callback === 'function') callback({ success: false, error: 'Room not found' });
+      return;
+    }
+
+    // Join the socket.io room so it receives all future broadcastRoomUpdate calls
+    socket.join(upperRoomId);
+    console.log(`Display subscribed to room ${upperRoomId} (socket: ${socket.id})`);
+
+    // Immediately send current room state so the display loads instantly
+    const payload = sanitizeRoomForClient(room);
+    socket.emit('room_state', payload);
+
+    if (typeof callback === 'function') callback({ success: true, room: payload });
   });
 
   // 5. Host Starts Game

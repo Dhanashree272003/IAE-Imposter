@@ -66,11 +66,22 @@ export default function HostView({ socket, roomState, onCreateRoom, onSetImposte
               <div className="text-4xl font-black font-mono text-cyan-400 tracking-widest">{roomId}</div>
             </div>
 
-            <div className="text-right">
-              <span className="text-xs text-slate-400 uppercase font-mono tracking-wider block">CURRENT PHASE</span>
-              <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 font-mono font-bold text-sm border border-purple-500/40 inline-block mt-1">
-                {phase} {timer > 0 ? `(${timer}s)` : ''}
-              </span>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => {
+                  const displayUrl = `${window.location.origin}/display?room=${encodeURIComponent(roomId)}`;
+                  window.open(displayUrl, '_blank');
+                }}
+                className="px-4 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-bold hover:bg-cyan-500/20 transition-all flex items-center gap-1.5"
+              >
+                <Monitor className="w-4 h-4" /> Open Display View ↗
+              </button>
+              <div className="text-right">
+                <span className="text-xs text-slate-400 uppercase font-mono tracking-wider block">CURRENT PHASE</span>
+                <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 font-mono font-bold text-sm border border-purple-500/40 inline-block mt-1">
+                  {phase} {timer > 0 ? `(${timer}s)` : ''}
+                </span>
+              </div>
             </div>
           </div>
 
