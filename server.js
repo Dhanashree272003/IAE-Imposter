@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import network from 'os';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { Redis } from '@upstash/redis';
 import { getRandomWord } from './words.js';
@@ -14,16 +15,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const httpServer = createServer(app);
 
-// Allow CORS for local dev / mobile testing
-const io = new Server(httpServer, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
-  transports: ["websocket", "polling"]
-});
-
-const PORT = process.env.PORT || 3000;
+app.use(express.json());
 
 // Initialize Upstash Redis if credentials are provided in environment
 let redis = null;
@@ -35,7 +27,7 @@ if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) 
   console.log('📡 Upstash Redis room storage active!');
 }
 
-// In-memory fallback map for local development
+// In-memory fallback map for local development without Redis credentials
 global.rooms = global.rooms || new Map();
 
 async function getRoom(roomId) {
@@ -44,7 +36,9 @@ async function getRoom(roomId) {
     try {
       const data = await redis.get(`room:${roomId}`);
       if (data) {
-        return typeof data === 'string' ? JSON.parse(data) : data;
+        const roomObj = typeof data === 'string' ? JSON.parse(data) : data;
+        global.rooms.set(roomId, roomObj);
+        return roomObj;
       }
     } catch (err) {
       console.error(`Redis get error for room ${roomId}:`, err);
@@ -66,7 +60,45 @@ async function saveRoom(roomId, roomData) {
   }
 }
 
-// Find local IPv4 address for QR Code scan on mobile devices
+// Backend Health Endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    redisConfigured: Boolean(redis),
+    environment: process.env.NODE_ENV || 'development',
+    vercel: Boolean(process.env.VERCEL)
+  });
+});
+
+// Serve compiled Vite production files from dist directory
+const distPath = path.join(__dirname, 'dist');
+app.use(express.static(distPath));
+
+// Catch-all route for SPA client-side routing
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/socket.io') || req.path.startsWith('/api')) {
+    return next();
+  }
+  const indexPath = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    res.send('AI Imposter Server is running');
+  }
+});
+
+// Configure Socket.IO server with native WebSockets and polling fallback
+const io = new Server(httpServer, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ["websocket", "polling"]
+});
+
+const PORT = process.env.PORT || 3000;
+
 function getLocalIpAddress() {
   const interfaces = network.networkInterfaces();
   for (const name of Object.keys(interfaces)) {
@@ -81,7 +113,6 @@ function getLocalIpAddress() {
 
 const SERVER_IP = getLocalIpAddress();
 
-// Helper to sanitize player object for public broadcast (never expose roles or internal scores during play)
 function sanitizeRoomForClient(room) {
   return {
     roomId: room.roomId,
@@ -637,20 +668,18 @@ io.on('connection', (socket) => {
   });
 });
 
-// Integration with Vite middleware (development & production single-port support)
-async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
-    const { createServer: createViteServer } = await import('vite');
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-    });
+async function startDevServer() {
+  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (e) {
+      console.warn('Vite dev middleware initialization skipped:', e.message);
+    }
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
@@ -662,10 +691,10 @@ async function startServer() {
   });
 }
 
-// Export httpServer directly for Vercel Node/WebSocket architecture
+// Export httpServer directly for Vercel Node/WebSocket deployment
 export default httpServer;
 
-// Start standalone server when executed directly (local development)
+// Only call listen() in standalone local development mode
 if (!process.env.VERCEL) {
-  startServer();
+  startDevServer();
 }

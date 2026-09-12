@@ -2,11 +2,19 @@
   "version": 2,
   "rewrites": [
     {
+      "source": "/api/health",
+      "destination": "/server.js"
+    },
+    {
       "source": "/socket.io/(.*)",
       "destination": "/server.js"
     },
     {
       "source": "/api/(.*)",
+      "destination": "/server.js"
+    },
+    {
+      "source": "/((?!assets/|favicon.ico|.*\\.js|.*\\.css|.*\\.png|.*\\.jpg|.*\\.svg).*)",
       "destination": "/server.js"
     }
   ]
